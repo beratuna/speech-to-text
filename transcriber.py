@@ -22,9 +22,8 @@ MODELS_MLX: dict[str, str] = {
 }
 
 MODELS_FASTER: dict[str, str] = {
-    "Large v3 Turbo (Default)": "large-v3-turbo",
-    "Medium": "medium",
     "Small": "small",
+    "Medium": "medium",
 }
 
 MODELS_FASTER_REPOS: tuple[str, ...] = (

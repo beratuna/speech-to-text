@@ -6,6 +6,10 @@ Backend is selected automatically:
 - Apple Silicon macOS: `mlx-whisper`
 - Other platforms (including Streamlit Cloud): `faster-whisper`
 
+Model availability:
+- Apple Silicon: Large/Medium/Small
+- Non-Apple and Streamlit Cloud: Small/Medium (Large is hidden to avoid deploy/runtime failures)
+
 ## Run Locally
 
 ```bash

@@ -45,6 +45,7 @@ def test_get_models_non_apple(mocker: Any) -> None:
     mocker.patch.object(transcriber, "_is_apple_silicon", return_value=False)
 
     assert transcriber.get_models() == transcriber.MODELS_FASTER
+    assert "Large v3 Turbo (Default)" not in transcriber.get_models()
 
 
 def test_transcribe_returns_stripped_text(fake_mlx: Any, wav_file: Path) -> None:
