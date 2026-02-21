@@ -25,19 +25,26 @@ def wav_file(tmp_path: Path) -> Path:
     return file_path
 
 
-@pytest.fixture(autouse=True)
-def clear_model_cache() -> None:
-    transcriber.load_model.clear()
-
-
 @pytest.fixture
 def fake_mlx(mocker: Any) -> Any:
+    mocker.patch.object(transcriber, "_is_apple_silicon", return_value=True)
     fake_module = SimpleNamespace(
-        load_model=mocker.Mock(return_value=object()),
         transcribe=mocker.Mock(return_value={"text": "ok"}),
     )
     mocker.patch.object(transcriber, "_get_mlx_whisper", return_value=fake_module)
     return fake_module
+
+
+def test_get_models_apple_silicon(mocker: Any) -> None:
+    mocker.patch.object(transcriber, "_is_apple_silicon", return_value=True)
+
+    assert transcriber.get_models() == transcriber.MODELS_MLX
+
+
+def test_get_models_non_apple(mocker: Any) -> None:
+    mocker.patch.object(transcriber, "_is_apple_silicon", return_value=False)
+
+    assert transcriber.get_models() == transcriber.MODELS_FASTER
 
 
 def test_transcribe_returns_stripped_text(fake_mlx: Any, wav_file: Path) -> None:
@@ -55,41 +62,49 @@ def test_transcribe_passes_language_code(fake_mlx: Any, wav_file: Path) -> None:
 
 
 def test_transcribe_passes_model_path(fake_mlx: Any, wav_file: Path) -> None:
-    transcriber.transcribe(wav_file, language=None, model_path="mlx-community/whisper-small")
+    transcriber.transcribe(wav_file, language=None, model_path="mlx-community/whisper-small-mlx")
 
-    fake_mlx.load_model.assert_called_once_with("mlx-community/whisper-small")
-
-
-def test_load_model_caches(fake_mlx: Any) -> None:
-    sentinel_model = object()
-    fake_mlx.load_model.return_value = sentinel_model
-
-    first = transcriber.load_model("mlx-community/whisper-small")
-    second = transcriber.load_model("mlx-community/whisper-small")
-
-    assert first is sentinel_model
-    assert second is sentinel_model
-    fake_mlx.load_model.assert_called_once_with("mlx-community/whisper-small")
+    assert (
+        fake_mlx.transcribe.call_args.kwargs["path_or_hf_repo"] == "mlx-community/whisper-small-mlx"
+    )
 
 
-def test_resolve_model_path_falls_back_when_primary_fails(mocker: Any) -> None:
-    attempts: list[str] = []
+def test_transcribe_uses_faster_whisper_non_apple(mocker: Any, wav_file: Path) -> None:
+    mocker.patch.object(transcriber, "_is_apple_silicon", return_value=False)
+    fake_model = SimpleNamespace(
+        transcribe=mocker.Mock(
+            return_value=(
+                iter(
+                    [
+                        SimpleNamespace(text=" hello", end=1.0),
+                        SimpleNamespace(text=" world ", end=2.0),
+                    ]
+                ),
+                SimpleNamespace(language="en"),
+            )
+        )
+    )
+    load_model = mocker.patch.object(transcriber, "_load_faster_model", return_value=fake_model)
 
-    def _fake_load(model_path: str) -> object:
-        attempts.append(model_path)
-        if model_path == "mlx-community/whisper-small":
-            raise RuntimeError("small repo not available")
-        return object()
+    result = transcriber.transcribe_with_metadata(wav_file, language="en", model_path="small")
 
-    mocker.patch.object(transcriber, "load_model", side_effect=_fake_load)
+    assert result.text == "hello world"
+    assert result.language == "en"
+    assert load_model.call_args.args[0] == "small"
+    assert fake_model.transcribe.call_args.kwargs["language"] == "en"
 
-    resolved = transcriber._resolve_model_path(model_path="mlx-community/whisper-small")
 
-    assert resolved == "mlx-community/whisper-small-mlx"
-    assert attempts == [
-        "mlx-community/whisper-small",
-        "mlx-community/whisper-small-mlx",
-    ]
+def test_clear_local_models_removes_hf_model_cache_dirs(tmp_path: Path, mocker: Any) -> None:
+    mocker.patch.dict("os.environ", {"HF_HUB_CACHE": str(tmp_path)})
+    target_repo = transcriber.MODELS_MLX["Small"]
+    target_dir = tmp_path / f"models--{target_repo.replace('/', '--')}"
+    target_dir.mkdir(parents=True)
+
+    removed, failed = transcriber.clear_local_models()
+
+    assert removed == 1
+    assert failed == 0
+    assert not target_dir.exists()
 
 
 @pytest.mark.integration
@@ -98,7 +113,7 @@ def test_integration_transcribe_sample_file() -> None:
     if not sample_audio.exists():
         pytest.skip("Sample audio file not found.")
 
-    default_model = transcriber.MODELS["Small"]
+    default_model = transcriber.get_models()["Small"]
     text = transcriber.transcribe(
         audio_path=sample_audio,
         language="tr",

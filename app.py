@@ -5,7 +5,14 @@ from pathlib import Path
 
 import streamlit as st
 
-from transcriber import LANGUAGES, MODELS, TranscriptionResult, transcribe_with_metadata
+from transcriber import (
+    LANGUAGES,
+    TranscriptionResult,
+    clear_local_models,
+    get_backend_name,
+    get_models,
+    transcribe_with_metadata,
+)
 
 SUPPORTED_TYPES = ["wav", "mp3", "m4a", "ogg", "flac"]
 SOFT_WARNING_BYTES = 100 * 1024 * 1024
@@ -108,13 +115,22 @@ def main() -> None:
     st.set_page_config(page_title="Speech to Text", page_icon="🎙️", layout="wide")
     st.title("Turkish + English Speech to Text")
     st.write("Upload audio or record directly in the browser.")
+    st.caption("First run may take longer; model weights download on first use.")
 
     with st.sidebar:
         st.header("Settings")
-        selected_model_label = st.selectbox("Model", list(MODELS))
+        models = get_models()
+        selected_model_label = st.selectbox("Model", list(models))
         selected_language_label = st.selectbox("Language", list(LANGUAGES), index=2)
+        st.caption(f"Backend: {get_backend_name()}")
+        if st.button("Clear local models", use_container_width=True):
+            removed, failed = clear_local_models()
+            if failed:
+                st.warning(f"Removed {removed} model cache directories, {failed} failed.")
+            else:
+                st.success(f"Removed {removed} model cache directories.")
 
-    model_path = MODELS[selected_model_label]
+    model_path = models[selected_model_label]
     language = LANGUAGES[selected_language_label]
 
     upload_tab, record_tab = st.tabs(["📁 Upload File", "🎤 Record"])

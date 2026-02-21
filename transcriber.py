@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-import streamlit as st
 
 LANGUAGES: dict[str, str | None] = {
     "Turkish": "tr",
@@ -14,36 +15,23 @@ LANGUAGES: dict[str, str | None] = {
     "Auto-detect": None,
 }
 
-MODELS: dict[str, str] = {
+MODELS_MLX: dict[str, str] = {
     "Large v3 Turbo (Default)": "mlx-community/whisper-large-v3-turbo",
     "Medium": "mlx-community/whisper-medium",
     "Small": "mlx-community/whisper-small-mlx",
 }
 
-MODEL_CANDIDATES: dict[str, tuple[str, ...]] = {
-    "mlx-community/whisper-large-v3-turbo": (
-        "mlx-community/whisper-large-v3-turbo",
-        "mlx-community/whisper-large-v3",
-        "mlx-community/whisper-medium",
-    ),
-    "mlx-community/whisper-medium": (
-        "mlx-community/whisper-medium",
-        "mlx-community/whisper-medium-mlx",
-        "mlx-community/whisper-base",
-    ),
-    "mlx-community/whisper-small-mlx": (
-        "mlx-community/whisper-small-mlx",
-        "mlx-community/whisper-small",
-        "mlx-community/whisper-base",
-        "mlx-community/whisper-tiny",
-    ),
-    "mlx-community/whisper-small": (
-        "mlx-community/whisper-small",
-        "mlx-community/whisper-small-mlx",
-        "mlx-community/whisper-base",
-        "mlx-community/whisper-tiny",
-    ),
+MODELS_FASTER: dict[str, str] = {
+    "Large v3 Turbo (Default)": "large-v3-turbo",
+    "Medium": "medium",
+    "Small": "small",
 }
+
+MODELS_FASTER_REPOS: tuple[str, ...] = (
+    "Systran/faster-whisper-large-v3-turbo",
+    "Systran/faster-whisper-medium",
+    "Systran/faster-whisper-small",
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +39,43 @@ class TranscriptionResult:
     text: str
     language: str | None = None
     duration_seconds: float | None = None
+
+
+def _is_apple_silicon() -> bool:
+    return platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
+def get_backend_name() -> str:
+    return "mlx-whisper" if _is_apple_silicon() else "faster-whisper"
+
+
+def get_models() -> dict[str, str]:
+    return MODELS_MLX if _is_apple_silicon() else MODELS_FASTER
+
+
+def clear_local_models() -> tuple[int, int]:
+    cache_root = Path(
+        os.getenv(
+            "HF_HUB_CACHE",
+            str(Path.home() / ".cache" / "huggingface" / "hub"),
+        )
+    )
+    removed = 0
+    failed = 0
+
+    repo_ids = set(MODELS_MLX.values()) | set(MODELS_FASTER_REPOS)
+
+    for repo_id in repo_ids:
+        cache_dir = cache_root / f"models--{repo_id.replace('/', '--')}"
+        if not cache_dir.exists():
+            continue
+        try:
+            shutil.rmtree(cache_dir)
+            removed += 1
+        except OSError:
+            failed += 1
+
+    return removed, failed
 
 
 def _get_mlx_whisper() -> Any:
@@ -63,29 +88,11 @@ def _get_mlx_whisper() -> Any:
     return mlx_whisper
 
 
-@st.cache_resource(show_spinner=False)
-def load_model(model_path: str) -> Any:
-    mlx_whisper = _get_mlx_whisper()
-    load_model_fn = getattr(mlx_whisper, "load_model", None)
-    if callable(load_model_fn):
-        return load_model_fn(model_path)
-    return model_path
+@lru_cache(maxsize=6)
+def _load_faster_model(model_name: str) -> Any:
+    from faster_whisper import WhisperModel
 
-
-def _resolve_model_path(model_path: str) -> str:
-    candidates = MODEL_CANDIDATES.get(model_path, (model_path,))
-    last_error: Exception | None = None
-
-    for candidate in candidates:
-        try:
-            load_model(candidate)
-            return candidate
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-
-    raise RuntimeError(
-        f"Unable to load any model variant for `{model_path}`. Last error: {last_error}"
-    ) from last_error
+    return WhisperModel(model_name, device="cpu", compute_type="int8")
 
 
 def _audio_duration_seconds(audio_path: Path) -> float | None:
@@ -132,6 +139,15 @@ def _payload_duration_seconds(payload: dict[str, Any]) -> float | None:
     return max(segment_ends, default=None)
 
 
+def _segment_duration_seconds(segments: list[Any]) -> float | None:
+    segment_ends = [
+        float(segment.end)
+        for segment in segments
+        if isinstance(getattr(segment, "end", None), int | float)
+    ]
+    return max(segment_ends, default=None)
+
+
 def transcribe_with_metadata(
     audio_path: Path,
     language: str | None,
@@ -140,30 +156,44 @@ def transcribe_with_metadata(
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-    resolved_model = _resolve_model_path(model_path=model_path)
+    if _is_apple_silicon():
+        mlx_whisper = _get_mlx_whisper()
+        kwargs: dict[str, Any] = {"path_or_hf_repo": model_path}
+        if language is not None:
+            kwargs["language"] = language
 
-    mlx_whisper = _get_mlx_whisper()
-    kwargs: dict[str, Any] = {"path_or_hf_repo": resolved_model}
-    if language is not None:
-        kwargs["language"] = language
+        try:
+            payload = mlx_whisper.transcribe(str(audio_path), verbose=None, **kwargs)
+        except TypeError:
+            payload = mlx_whisper.transcribe(str(audio_path), **kwargs)
 
-    try:
-        payload = mlx_whisper.transcribe(str(audio_path), verbose=None, **kwargs)
-    except TypeError:
-        payload = mlx_whisper.transcribe(str(audio_path), **kwargs)
+        if not isinstance(payload, dict):
+            return TranscriptionResult(text=str(payload).strip())
 
-    if not isinstance(payload, dict):
-        return TranscriptionResult(text=str(payload).strip())
+        text = str(payload.get("text", "")).strip()
+        detected_language = payload.get("language")
+        if not isinstance(detected_language, str):
+            detected_language = None
+        duration = _payload_duration_seconds(payload)
+    else:
+        model = _load_faster_model(model_path)
+        kwargs: dict[str, Any] = {}
+        if language is not None:
+            kwargs["language"] = language
 
-    text = str(payload.get("text", "")).strip()
-    detected_language = payload.get("language")
-    if not isinstance(detected_language, str):
-        detected_language = None
+        segments, info = model.transcribe(str(audio_path), **kwargs)
+        segment_list = list(segments)
+
+        text = "".join(segment.text for segment in segment_list).strip()
+        detected_language = getattr(info, "language", None)
+        if not isinstance(detected_language, str):
+            detected_language = None
+        duration = _segment_duration_seconds(segment_list)
 
     return TranscriptionResult(
         text=text,
         language=detected_language,
-        duration_seconds=_audio_duration_seconds(audio_path) or _payload_duration_seconds(payload),
+        duration_seconds=_audio_duration_seconds(audio_path) or duration,
     )
 
 
