@@ -5,6 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from synthesizer import SOFT_TEXT_LIMIT, TTS_LANGUAGES, SynthesisResult, synthesize_with_metadata
 from transcriber import (
     LANGUAGES,
     TranscriptionResult,
@@ -70,6 +71,8 @@ def _transcribe_audio(audio_path: Path, language: str | None, model_path: str) -
         st.warning("Transcription completed, but no text was produced.")
         return
 
+    st.session_state["latest_transcript"] = result.text
+    st.session_state["tts_text"] = result.text
     _render_result(result)
 
 
@@ -121,10 +124,49 @@ def _recorder_tab(language: str | None, model_path: str) -> None:
         temp_path.unlink(missing_ok=True)
 
 
+def _render_tts_result(result: SynthesisResult) -> None:
+    st.audio(result.audio_bytes, format=result.mime_type)
+    st.download_button(
+        "Download audio",
+        data=result.audio_bytes,
+        file_name="speech.wav",
+        mime=result.mime_type,
+        use_container_width=True,
+    )
+    st.caption(f"Backend: {result.backend}")
+
+
+def _tts_tab() -> None:
+    if "tts_text" not in st.session_state:
+        st.session_state["tts_text"] = st.session_state.get("latest_transcript", "")
+
+    selected_language_label = st.selectbox(
+        "Language", list(TTS_LANGUAGES), key="tts_language_label"
+    )
+    text_to_speak = st.text_area("Text to speak", key="tts_text", height=220)
+    if len(text_to_speak.strip()) > SOFT_TEXT_LIMIT:
+        st.warning(
+            f"Long text detected (>{SOFT_TEXT_LIMIT} chars). This can be slower; chunking is planned."
+        )
+
+    if not st.button("Generate speech", use_container_width=True, key="generate_speech"):
+        return
+
+    language_code = TTS_LANGUAGES[selected_language_label]
+    try:
+        with st.spinner("Generating speech..."):
+            result = synthesize_with_metadata(text=text_to_speak, language=language_code)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Speech generation failed: {exc}")
+        return
+
+    _render_tts_result(result)
+
+
 def main() -> None:
     st.set_page_config(page_title="Speech to Text", page_icon="🎙️", layout="wide")
     st.title("Turkish + English Speech to Text")
-    st.write("Upload audio/video or record directly in the browser.")
+    st.write("Upload audio/video, record speech, or synthesize text.")
     st.caption("First run may take longer; model weights download on first use.")
 
     with st.sidebar:
@@ -143,11 +185,13 @@ def main() -> None:
     model_path = models[selected_model_label]
     language = LANGUAGES[selected_language_label]
 
-    upload_tab, record_tab = st.tabs(["📁 Upload File", "🎤 Record"])
+    upload_tab, record_tab, tts_tab = st.tabs(["📁 Upload File", "🎤 Record", "🗣️ Text to Speech"])
     with upload_tab:
         _uploader_tab(language=language, model_path=model_path)
     with record_tab:
         _recorder_tab(language=language, model_path=model_path)
+    with tts_tab:
+        _tts_tab()
 
 
 if __name__ == "__main__":

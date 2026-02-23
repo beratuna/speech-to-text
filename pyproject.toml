@@ -7,7 +7,9 @@ requires-python = ">=3.11"
 dependencies = [
     "streamlit>=1.28.0",
     "mlx-whisper>=0.4.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
+    "mlx-audio>=0.2.10,<0.3.0; platform_system == 'Darwin' and platform_machine == 'arm64'",
     "faster-whisper>=1.1.1; platform_system != 'Darwin' or platform_machine != 'arm64'",
+    "chatterbox-tts>=0.1.2; platform_system != 'Darwin' or platform_machine != 'arm64'",
 ]
 
 [dependency-groups]
@@ -22,12 +24,15 @@ dev = [
 line-length = 100
 target-version = "py311"
 
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["transcriber"]
+known-first-party = ["synthesizer", "transcriber"]
 
 [tool.pytest.ini_options]
 markers = [
