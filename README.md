@@ -1,6 +1,6 @@
 # Speech to Text
 
-Simple Streamlit app for transcribing Turkish and English audio.
+Simple Streamlit app for transcribing Turkish and English audio/video.
 
 Backend is selected automatically:
 - Apple Silicon macOS: `mlx-whisper`

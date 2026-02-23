@@ -14,11 +14,13 @@ from transcriber import (
     transcribe_with_metadata,
 )
 
-SUPPORTED_TYPES = ["wav", "mp3", "m4a", "ogg", "flac"]
+SUPPORTED_AUDIO_TYPES = ["wav", "mp3", "m4a", "ogg", "flac"]
+SUPPORTED_VIDEO_TYPES = ["mp4", "mov", "m4v", "mkv", "webm", "avi"]
+SUPPORTED_MEDIA_TYPES = [*SUPPORTED_AUDIO_TYPES, *SUPPORTED_VIDEO_TYPES]
 SOFT_WARNING_BYTES = 100 * 1024 * 1024
 
 
-def _save_temp_audio(content: bytes, suffix: str) -> Path:
+def _save_temp_file(content: bytes, suffix: str) -> Path:
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
         temp_file.write(content)
         return Path(temp_file.name)
@@ -38,10 +40,18 @@ def _render_result(result: TranscriptionResult) -> None:
     st.subheader("Transcription")
     st.text_area("Text", value=result.text, height=260)
 
-    metadata = [f"Audio duration: `{_format_duration(result.duration_seconds)}`"]
+    metadata = [f"Media duration: `{_format_duration(result.duration_seconds)}`"]
     if result.language:
         metadata.insert(0, f"Detected language: `{result.language}`")
     st.caption(" | ".join(metadata))
+
+
+def _render_uploaded_media_preview(uploaded_file) -> None:
+    extension = Path(uploaded_file.name).suffix.lower().lstrip(".")
+    if extension in SUPPORTED_VIDEO_TYPES:
+        st.video(uploaded_file)
+    else:
+        st.audio(uploaded_file)
 
 
 def _transcribe_audio(audio_path: Path, language: str | None, model_path: str) -> None:
@@ -65,14 +75,14 @@ def _transcribe_audio(audio_path: Path, language: str | None, model_path: str) -
 
 def _uploader_tab(language: str | None, model_path: str) -> None:
     uploaded_file = st.file_uploader(
-        "Upload audio",
-        type=SUPPORTED_TYPES,
-        help="Supported formats: wav, mp3, m4a, ogg, flac",
+        "Upload audio or video",
+        type=SUPPORTED_MEDIA_TYPES,
+        help="Supported audio: wav, mp3, m4a, ogg, flac | video: mp4, mov, m4v, mkv, webm, avi",
     )
     if uploaded_file is None:
         return
 
-    st.audio(uploaded_file)
+    _render_uploaded_media_preview(uploaded_file)
 
     if uploaded_file.size > SOFT_WARNING_BYTES:
         st.warning("Large file detected (>100MB). Transcription may take longer.")
@@ -80,8 +90,8 @@ def _uploader_tab(language: str | None, model_path: str) -> None:
     if not st.button("Transcribe uploaded file", use_container_width=True, key="transcribe_upload"):
         return
 
-    suffix = Path(uploaded_file.name).suffix or ".wav"
-    temp_path = _save_temp_audio(uploaded_file.getvalue(), suffix=suffix)
+    suffix = Path(uploaded_file.name).suffix or ".tmp"
+    temp_path = _save_temp_file(uploaded_file.getvalue(), suffix=suffix)
     try:
         _transcribe_audio(temp_path, language=language, model_path=model_path)
     finally:
@@ -104,7 +114,7 @@ def _recorder_tab(language: str | None, model_path: str) -> None:
     if not st.button("Transcribe recording", use_container_width=True, key="transcribe_recording"):
         return
 
-    temp_path = _save_temp_audio(recorded_audio.getvalue(), suffix=".wav")
+    temp_path = _save_temp_file(recorded_audio.getvalue(), suffix=".wav")
     try:
         _transcribe_audio(temp_path, language=language, model_path=model_path)
     finally:
@@ -114,7 +124,7 @@ def _recorder_tab(language: str | None, model_path: str) -> None:
 def main() -> None:
     st.set_page_config(page_title="Speech to Text", page_icon="🎙️", layout="wide")
     st.title("Turkish + English Speech to Text")
-    st.write("Upload audio or record directly in the browser.")
+    st.write("Upload audio/video or record directly in the browser.")
     st.caption("First run may take longer; model weights download on first use.")
 
     with st.sidebar:
