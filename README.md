@@ -9,7 +9,7 @@ Backend is selected automatically:
 - Other platforms (including Streamlit Cloud): `faster-whisper`
 
 TTS backend is also selected automatically:
-- Apple Silicon macOS: `mlx-audio` (`mlx-community/chatterbox-6bit`)
+- Apple Silicon macOS: `mlx-audio` (`mlx-community/chatterbox-6bit`) when installed
 - Other platforms (including Streamlit Cloud): `chatterbox-tts` (CPU)
 
 Model availability:

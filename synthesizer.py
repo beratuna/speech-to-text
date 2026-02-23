@@ -31,8 +31,18 @@ def _is_apple_silicon() -> bool:
     return platform.system() == "Darwin" and platform.machine() == "arm64"
 
 
+def _has_mlx_tts_support() -> bool:
+    if not _is_apple_silicon():
+        return False
+    try:
+        from mlx_audio.tts.utils import load_model as _  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 def get_tts_backend_name() -> str:
-    return "mlx-audio" if _is_apple_silicon() else "chatterbox-tts"
+    return "mlx-audio" if _has_mlx_tts_support() else "chatterbox-tts"
 
 
 @lru_cache(maxsize=1)
@@ -55,7 +65,7 @@ def is_tts_model_loaded() -> bool:
 
 def load_tts_model() -> None:
     global _TTS_MODEL_LOADED
-    if _is_apple_silicon():
+    if _has_mlx_tts_support():
         _load_mlx_tts_model()
     else:
         _load_chatterbox_model()
@@ -174,6 +184,6 @@ def synthesize_with_metadata(text: str, language: str) -> SynthesisResult:
     # TODO: Add cloud fallback backend for constrained deployment environments.
     # TODO: Add chunk-and-concat generation for very long text.
     load_tts_model()
-    if _is_apple_silicon():
+    if _has_mlx_tts_support():
         return _synthesize_mlx(cleaned_text, language=language)
     return _synthesize_chatterbox(cleaned_text, language=language)
