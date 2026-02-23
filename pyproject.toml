@@ -35,3 +35,6 @@ known-first-party = ["synthesizer", "transcriber"]
 markers = [
     "integration: marks tests that require model download",
 ]
+
+[tool.poetry]
+package-mode = false
