@@ -5,13 +5,24 @@ from pathlib import Path
 
 import streamlit as st
 
-from synthesizer import SOFT_TEXT_LIMIT, TTS_LANGUAGES, SynthesisResult, synthesize_with_metadata
+from synthesizer import (
+    SOFT_TEXT_LIMIT,
+    TTS_LANGUAGES,
+    SynthesisResult,
+    get_tts_backend_name,
+    is_tts_model_loaded,
+    load_tts_model,
+    reset_tts_model_state,
+    synthesize_with_metadata,
+)
 from transcriber import (
     LANGUAGES,
     TranscriptionResult,
     clear_local_models,
     get_backend_name,
     get_models,
+    is_stt_model_loaded,
+    load_stt_model,
     transcribe_with_metadata,
 )
 
@@ -56,6 +67,14 @@ def _render_uploaded_media_preview(uploaded_file) -> None:
 
 
 def _transcribe_audio(audio_path: Path, language: str | None, model_path: str) -> None:
+    if not is_stt_model_loaded(model_path):
+        try:
+            with st.spinner("Loading model..."):
+                load_stt_model(model_path)
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Model loading failed: {exc}")
+            return
+
     try:
         with st.spinner("Transcribing..."):
             result = transcribe_with_metadata(
@@ -153,6 +172,14 @@ def _tts_tab() -> None:
         return
 
     language_code = TTS_LANGUAGES[selected_language_label]
+    if not is_tts_model_loaded():
+        try:
+            with st.spinner("Loading model..."):
+                load_tts_model()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Model loading failed: {exc}")
+            return
+
     try:
         with st.spinner("Generating speech..."):
             result = synthesize_with_metadata(text=text_to_speak, language=language_code)
@@ -171,26 +198,35 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Settings")
-        models = get_models()
-        selected_model_label = st.selectbox("Model", list(models))
-        selected_language_label = st.selectbox("Language", list(LANGUAGES), index=2)
-        st.caption(f"Backend: {get_backend_name()}")
+        selected_task = st.selectbox("Task", ["Speech to Text", "Text to Speech"])
+
+        if selected_task == "Speech to Text":
+            models = get_models()
+            selected_model_label = st.selectbox("Model", list(models))
+            selected_language_label = st.selectbox("Language", list(LANGUAGES), index=2)
+            st.caption(f"Backend: {get_backend_name()}")
+            model_path = models[selected_model_label]
+            language = LANGUAGES[selected_language_label]
+        else:
+            model_path = None
+            language = None
+            st.caption(f"Backend: {get_tts_backend_name()}")
+
         if st.button("Clear local models", use_container_width=True):
             removed, failed = clear_local_models()
+            reset_tts_model_state()
             if failed:
                 st.warning(f"Removed {removed} model cache directories, {failed} failed.")
             else:
                 st.success(f"Removed {removed} model cache directories.")
 
-    model_path = models[selected_model_label]
-    language = LANGUAGES[selected_language_label]
-
-    upload_tab, record_tab, tts_tab = st.tabs(["📁 Upload File", "🎤 Record", "🗣️ Text to Speech"])
-    with upload_tab:
-        _uploader_tab(language=language, model_path=model_path)
-    with record_tab:
-        _recorder_tab(language=language, model_path=model_path)
-    with tts_tab:
+    if selected_task == "Speech to Text":
+        upload_tab, record_tab = st.tabs(["📁 Upload File", "🎤 Record"])
+        with upload_tab:
+            _uploader_tab(language=language, model_path=model_path)
+        with record_tab:
+            _recorder_tab(language=language, model_path=model_path)
+    else:
         _tts_tab()
 
 

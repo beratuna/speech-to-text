@@ -32,6 +32,8 @@ MODELS_FASTER_REPOS: tuple[str, ...] = (
     "Systran/faster-whisper-small",
 )
 
+_LOADED_STT_MODELS: set[str] = set()
+
 
 @dataclass(frozen=True)
 class TranscriptionResult:
@@ -74,6 +76,9 @@ def clear_local_models() -> tuple[int, int]:
         except OSError:
             failed += 1
 
+    _load_faster_model.cache_clear()
+    _load_mlx_model.cache_clear()
+    _LOADED_STT_MODELS.clear()
     return removed, failed
 
 
@@ -92,6 +97,27 @@ def _load_faster_model(model_name: str) -> Any:
     from faster_whisper import WhisperModel
 
     return WhisperModel(model_name, device="cpu", compute_type="int8")
+
+
+@lru_cache(maxsize=6)
+def _load_mlx_model(model_path: str) -> Any:
+    mlx_whisper = _get_mlx_whisper()
+    load_model_fn = getattr(mlx_whisper, "load_model", None)
+    if callable(load_model_fn):
+        return load_model_fn(model_path)
+    return model_path
+
+
+def is_stt_model_loaded(model_path: str) -> bool:
+    return model_path in _LOADED_STT_MODELS
+
+
+def load_stt_model(model_path: str) -> None:
+    if _is_apple_silicon():
+        _load_mlx_model(model_path)
+    else:
+        _load_faster_model(model_path)
+    _LOADED_STT_MODELS.add(model_path)
 
 
 def _audio_duration_seconds(audio_path: Path) -> float | None:
@@ -156,6 +182,7 @@ def transcribe_with_metadata(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     if _is_apple_silicon():
+        load_stt_model(model_path)
         mlx_whisper = _get_mlx_whisper()
         kwargs: dict[str, Any] = {"path_or_hf_repo": model_path}
         if language is not None:
@@ -176,6 +203,7 @@ def transcribe_with_metadata(
         duration = _payload_duration_seconds(payload)
     else:
         model = _load_faster_model(model_path)
+        _LOADED_STT_MODELS.add(model_path)
         kwargs: dict[str, Any] = {}
         if language is not None:
             kwargs["language"] = language

@@ -16,6 +16,7 @@ TTS_LANGUAGES: dict[str, str] = {
 
 MLX_TTS_MODEL = "mlx-community/chatterbox-6bit"
 SOFT_TEXT_LIMIT = 600
+_TTS_MODEL_LOADED = False
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,26 @@ def _load_chatterbox_model() -> Any:
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
     return ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+
+
+def is_tts_model_loaded() -> bool:
+    return _TTS_MODEL_LOADED
+
+
+def load_tts_model() -> None:
+    global _TTS_MODEL_LOADED
+    if _is_apple_silicon():
+        _load_mlx_tts_model()
+    else:
+        _load_chatterbox_model()
+    _TTS_MODEL_LOADED = True
+
+
+def reset_tts_model_state() -> None:
+    global _TTS_MODEL_LOADED
+    _load_mlx_tts_model.cache_clear()
+    _load_chatterbox_model.cache_clear()
+    _TTS_MODEL_LOADED = False
 
 
 def _resolve_generated_wav_path(prefix_path: Path, generated: Any) -> Path:
@@ -152,6 +173,7 @@ def synthesize_with_metadata(text: str, language: str) -> SynthesisResult:
 
     # TODO: Add cloud fallback backend for constrained deployment environments.
     # TODO: Add chunk-and-concat generation for very long text.
+    load_tts_model()
     if _is_apple_silicon():
         return _synthesize_mlx(cleaned_text, language=language)
     return _synthesize_chatterbox(cleaned_text, language=language)
