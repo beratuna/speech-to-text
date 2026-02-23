@@ -10,7 +10,8 @@ Backend is selected automatically:
 
 TTS backend is also selected automatically:
 - Apple Silicon macOS: `mlx-audio` (`mlx-community/chatterbox-6bit`) when installed
-- Other platforms (including Streamlit Cloud): `chatterbox-tts` (CPU)
+- Other platforms (including Streamlit Cloud): `chatterbox-tts` (CPU) when available
+- Fallback: `gTTS` when `chatterbox-tts` is unavailable/incompatible
 
 Model availability:
 - Apple Silicon: Large/Medium/Small

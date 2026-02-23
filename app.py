@@ -145,10 +145,11 @@ def _recorder_tab(language: str | None, model_path: str) -> None:
 
 def _render_tts_result(result: SynthesisResult) -> None:
     st.audio(result.audio_bytes, format=result.mime_type)
+    extension = "mp3" if result.mime_type == "audio/mp3" else "wav"
     st.download_button(
         "Download audio",
         data=result.audio_bytes,
-        file_name="speech.wav",
+        file_name=f"speech.{extension}",
         mime=result.mime_type,
         use_container_width=True,
     )

@@ -41,8 +41,20 @@ def _has_mlx_tts_support() -> bool:
     return True
 
 
+def _has_chatterbox_support() -> bool:
+    try:
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS as _  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 def get_tts_backend_name() -> str:
-    return "mlx-audio" if _has_mlx_tts_support() else "chatterbox-tts"
+    if _has_mlx_tts_support():
+        return "mlx-audio"
+    if _has_chatterbox_support():
+        return "chatterbox-tts"
+    return "gtts"
 
 
 @lru_cache(maxsize=1)
@@ -67,8 +79,12 @@ def load_tts_model() -> None:
     global _TTS_MODEL_LOADED
     if _has_mlx_tts_support():
         _load_mlx_tts_model()
-    else:
+    elif _has_chatterbox_support():
         _load_chatterbox_model()
+    else:
+        # gTTS does not require local model loading.
+        _TTS_MODEL_LOADED = True
+        return
     _TTS_MODEL_LOADED = True
 
 
@@ -174,6 +190,20 @@ def _synthesize_chatterbox(text: str, language: str) -> SynthesisResult:
     )
 
 
+def _synthesize_gtts(text: str, language: str) -> SynthesisResult:
+    from gtts import gTTS
+
+    with io.BytesIO() as buffer:
+        gTTS(text=text, lang=language).write_to_fp(buffer)
+        audio_bytes = buffer.getvalue()
+    return SynthesisResult(
+        audio_bytes=audio_bytes,
+        mime_type="audio/mp3",
+        sample_rate=None,
+        backend="gtts",
+    )
+
+
 def synthesize_with_metadata(text: str, language: str) -> SynthesisResult:
     cleaned_text = text.strip()
     if not cleaned_text:
@@ -186,4 +216,6 @@ def synthesize_with_metadata(text: str, language: str) -> SynthesisResult:
     load_tts_model()
     if _has_mlx_tts_support():
         return _synthesize_mlx(cleaned_text, language=language)
-    return _synthesize_chatterbox(cleaned_text, language=language)
+    if _has_chatterbox_support():
+        return _synthesize_chatterbox(cleaned_text, language=language)
+    return _synthesize_gtts(cleaned_text, language=language)
