@@ -37,7 +37,3 @@ uv run streamlit run app.py
 2. In Streamlit Community Cloud, create a new app from this repo.
 3. Set the main file path to `app.py`.
 4. Share the generated app URL.
-
-Deployment note:
-- `runtime.txt` pins Streamlit Cloud to Python 3.11 for current TTS dependency compatibility.
-- `requirements.txt` is included so Streamlit Cloud installs dependencies via requirements mode.
