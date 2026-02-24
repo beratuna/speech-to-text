@@ -4,8 +4,6 @@ Minimal Streamlit app for Turkish/English speech workflows:
 - Speech-to-text (audio/video upload + mic recording)
 - Text-to-speech (TR/EN)
 
-<!-- LOC_START -->Python LOC: `737` across `8` files (auto-updated).<!-- LOC_END -->
-
 Backend is selected automatically:
 - Apple Silicon macOS: `mlx-whisper`
 - Other platforms (including Streamlit Cloud): `faster-whisper`
@@ -40,4 +38,3 @@ uv run streamlit run app.py
 
 Deployment note:
 - `runtime.txt` pins Streamlit Cloud to Python 3.11 for current TTS dependency compatibility.
-- `requirements.txt` is included so Streamlit Cloud installs dependencies via requirements mode.
