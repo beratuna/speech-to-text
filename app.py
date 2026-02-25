@@ -204,7 +204,14 @@ def _tts_tab() -> None:
             f"Long text detected (>{SOFT_TEXT_LIMIT} chars). This can be slower; chunking is planned."
         )
 
-    tts_mode = st.radio("TTS mode", ["Standard", "Voice Clone"], horizontal=True, key="tts_mode")
+    tts_mode_options = ["Standard"]
+    clone_available = is_voice_clone_available()
+    if clone_available:
+        tts_mode_options.append("Voice Clone")
+    else:
+        st.info("Voice Clone is unavailable in this environment (XTTS dependency not installed).")
+
+    tts_mode = st.radio("TTS mode", tts_mode_options, horizontal=True, key="tts_mode")
     language_code = TTS_LANGUAGES[selected_language_label]
     reference_file = None
     button_label = "Generate speech"
