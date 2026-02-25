@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import os
 import platform
 import shutil
@@ -76,9 +77,7 @@ def clear_local_models() -> tuple[int, int]:
         except OSError:
             failed += 1
 
-    _load_faster_model.cache_clear()
-    _load_mlx_model.cache_clear()
-    _LOADED_STT_MODELS.clear()
+    release_stt_models()
     return removed, failed
 
 
@@ -118,6 +117,13 @@ def load_stt_model(model_path: str) -> None:
     else:
         _load_faster_model(model_path)
     _LOADED_STT_MODELS.add(model_path)
+
+
+def release_stt_models() -> None:
+    _load_faster_model.cache_clear()
+    _load_mlx_model.cache_clear()
+    _LOADED_STT_MODELS.clear()
+    gc.collect()
 
 
 def _audio_duration_seconds(audio_path: Path) -> float | None:

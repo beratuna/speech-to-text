@@ -108,6 +108,16 @@ def test_clear_local_models_removes_hf_model_cache_dirs(tmp_path: Path, mocker: 
     assert not target_dir.exists()
 
 
+def test_release_stt_models_resets_loaded_state(mocker: Any) -> None:
+    collect = mocker.patch.object(transcriber.gc, "collect")
+    transcriber._LOADED_STT_MODELS.add("small")
+
+    transcriber.release_stt_models()
+
+    assert not transcriber._LOADED_STT_MODELS
+    assert collect.called
+
+
 @pytest.mark.integration
 def test_integration_transcribe_sample_file() -> None:
     sample_audio = Path(__file__).resolve().parents[1] / "vize workflow.m4a"

@@ -18,6 +18,8 @@ from synthesizer import (
     load_tts_model,
     load_voice_clone_model,
     preprocess_reference_audio,
+    release_standard_tts_model,
+    release_voice_clone_model,
     reset_tts_model_state,
     synthesize_clone_with_metadata,
     synthesize_with_metadata,
@@ -30,6 +32,7 @@ from transcriber import (
     get_models,
     is_stt_model_loaded,
     load_stt_model,
+    release_stt_models,
     transcribe_with_metadata,
 )
 
@@ -175,6 +178,19 @@ def _render_voice_clone_tips() -> None:
         )
 
 
+def _handle_task_switch(selected_task: str) -> None:
+    previous_task = st.session_state.get("active_task")
+    if previous_task == selected_task:
+        return
+
+    st.session_state["active_task"] = selected_task
+    if selected_task == "Text to Speech":
+        release_stt_models()
+    else:
+        release_standard_tts_model()
+        release_voice_clone_model()
+
+
 def _tts_tab() -> None:
     if "tts_text" not in st.session_state:
         st.session_state["tts_text"] = st.session_state.get("latest_transcript", "")
@@ -200,6 +216,11 @@ def _tts_tab() -> None:
                 "Voice cloning on Streamlit Cloud runs on CPU and may take 20-40 seconds for short text."
             )
         _render_voice_clone_tips()
+        keep_clone_loaded = st.checkbox(
+            "Keep clone model loaded in memory (faster, uses more RAM)",
+            value=False,
+            key="keep_clone_model_loaded",
+        )
         reference_file = st.file_uploader(
             "Reference voice sample",
             type=SUPPORTED_AUDIO_TYPES,
@@ -214,6 +235,9 @@ def _tts_tab() -> None:
         return
 
     if tts_mode == "Standard":
+        if is_voice_clone_model_loaded():
+            with st.spinner("Freeing voice clone model memory..."):
+                release_voice_clone_model()
         if not is_tts_model_loaded():
             try:
                 with st.spinner("Loading model..."):
@@ -238,6 +262,10 @@ def _tts_tab() -> None:
     if reference_file is None:
         st.warning("Please upload a reference voice sample before generating cloned speech.")
         return
+
+    if is_tts_model_loaded():
+        with st.spinner("Freeing standard TTS model memory..."):
+            release_standard_tts_model()
 
     ref_suffix = Path(reference_file.name).suffix or ".wav"
     ref_path: Path | None = None
@@ -266,6 +294,8 @@ def _tts_tab() -> None:
     finally:
         if ref_path is not None:
             ref_path.unlink(missing_ok=True)
+        if not keep_clone_loaded:
+            release_voice_clone_model()
 
     _render_tts_result(result)
 
@@ -279,6 +309,7 @@ def main() -> None:
     with st.sidebar:
         st.header("Settings")
         selected_task = st.selectbox("Task", ["Speech to Text", "Text to Speech"])
+        _handle_task_switch(selected_task)
 
         if selected_task == "Speech to Text":
             models = get_models()

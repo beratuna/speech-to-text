@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import gc
 import io
 import os
 import platform
 import tempfile
 import warnings
 import wave
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -147,13 +149,64 @@ def load_voice_clone_model() -> None:
     _VOICE_CLONE_MODEL_LOADED = True
 
 
-def reset_tts_model_state() -> None:
-    global _TTS_MODEL_LOADED, _VOICE_CLONE_MODEL_LOADED
+def _free_torch_memory() -> None:
+    try:
+        import torch
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        has_mps = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        if has_mps:
+            torch.mps.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _move_model_to_cpu(model: Any) -> None:
+    if model is None:
+        return
+    to_fn = getattr(model, "to", None)
+    if callable(to_fn):
+        with suppress(Exception):
+            to_fn("cpu")
+
+    synthesizer = getattr(model, "synthesizer", None)
+    tts_model = getattr(synthesizer, "tts_model", None)
+    tts_to_fn = getattr(tts_model, "to", None)
+    if callable(tts_to_fn):
+        with suppress(Exception):
+            tts_to_fn("cpu")
+
+
+def release_standard_tts_model() -> None:
+    global _TTS_MODEL_LOADED
     _load_mlx_tts_model.cache_clear()
     _load_chatterbox_model.cache_clear()
-    _load_xtts_model.cache_clear()
     _TTS_MODEL_LOADED = False
+    gc.collect()
+    _free_torch_memory()
+
+
+def release_voice_clone_model() -> None:
+    global _VOICE_CLONE_MODEL_LOADED
+    if _VOICE_CLONE_MODEL_LOADED:
+        with suppress(Exception):
+            _move_model_to_cpu(_load_xtts_model())
+    _load_xtts_model.cache_clear()
     _VOICE_CLONE_MODEL_LOADED = False
+    gc.collect()
+    _free_torch_memory()
+
+
+def reset_tts_model_state() -> None:
+    global _TTS_MODEL_LOADED, _VOICE_CLONE_MODEL_LOADED
+    release_standard_tts_model()
+    release_voice_clone_model()
 
 
 def _resolve_generated_wav_path(prefix_path: Path, generated: Any) -> Path:

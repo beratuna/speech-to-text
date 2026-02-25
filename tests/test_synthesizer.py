@@ -54,6 +54,29 @@ def test_load_voice_clone_model_sets_tos_env(mocker: Any) -> None:
     assert synthesizer.is_voice_clone_model_loaded()
 
 
+def test_release_voice_clone_model_resets_state(mocker: Any) -> None:
+    mocker.patch.object(synthesizer, "_free_torch_memory")
+    mocker.patch.object(synthesizer, "_load_xtts_model", return_value=SimpleNamespace(to=lambda *_: None))
+    collect = mocker.patch.object(synthesizer.gc, "collect")
+    synthesizer._VOICE_CLONE_MODEL_LOADED = True
+
+    synthesizer.release_voice_clone_model()
+
+    assert not synthesizer.is_voice_clone_model_loaded()
+    assert collect.called
+
+
+def test_release_standard_tts_model_resets_state(mocker: Any) -> None:
+    mocker.patch.object(synthesizer, "_free_torch_memory")
+    collect = mocker.patch.object(synthesizer.gc, "collect")
+    synthesizer._TTS_MODEL_LOADED = True
+
+    synthesizer.release_standard_tts_model()
+
+    assert not synthesizer.is_tts_model_loaded()
+    assert collect.called
+
+
 def test_synthesize_non_apple_passes_language_code(mocker: Any) -> None:
     mocker.patch.object(synthesizer, "_has_mlx_tts_support", return_value=False)
     mocker.patch.object(synthesizer, "_has_chatterbox_support", return_value=True)
