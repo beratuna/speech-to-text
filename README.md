@@ -32,6 +32,7 @@ Voice cloning is available in **Text-to-Speech → Voice Clone** mode:
 - XTTS v2 synthesizes Turkish or English speech in the reference voice
 - XTTS model weights are downloaded once and cached
 - XTTS dependency (`TTS>=0.22.0`) currently supports Python `<3.12`, so Voice Clone is hidden when unavailable
+- Streamlit Cloud: set Python 3.11 in app Advanced settings to enable XTTS install
 
 Expected short-text inference speed:
 

@@ -209,7 +209,12 @@ def _tts_tab() -> None:
     if clone_available:
         tts_mode_options.append("Voice Clone")
     else:
-        st.info("Voice Clone is unavailable in this environment (XTTS dependency not installed).")
+        unavailable_message = "Voice Clone is unavailable in this environment (XTTS dependency not installed)."
+        if IS_STREAMLIT_CLOUD:
+            unavailable_message += (
+                " On Streamlit Cloud, set Python 3.11 in Advanced settings and redeploy."
+            )
+        st.info(unavailable_message)
 
     tts_mode = st.radio("TTS mode", tts_mode_options, horizontal=True, key="tts_mode")
     language_code = TTS_LANGUAGES[selected_language_label]
