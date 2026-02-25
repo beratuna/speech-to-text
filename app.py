@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import warnings
 from pathlib import Path
 
 import streamlit as st
@@ -41,6 +42,13 @@ SUPPORTED_VIDEO_TYPES = ["mp4", "mov", "m4v", "mkv", "webm", "avi"]
 SUPPORTED_MEDIA_TYPES = [*SUPPORTED_AUDIO_TYPES, *SUPPORTED_VIDEO_TYPES]
 SOFT_WARNING_BYTES = 100 * 1024 * 1024
 IS_STREAMLIT_CLOUD = os.environ.get("HOME") == "/home/appuser"
+ALLOW_CLOUD_VOICE_CLONE = os.environ.get("ALLOW_CLOUD_VOICE_CLONE") == "1"
+
+warnings.filterwarnings(
+    "ignore",
+    message="Torchaudio's I/O functions now support par-call backend dispatch.*",
+    category=UserWarning,
+)
 
 
 def _save_temp_file(content: bytes, suffix: str) -> Path:
@@ -205,14 +213,19 @@ def _tts_tab() -> None:
         )
 
     tts_mode_options = ["Standard"]
-    clone_available = is_voice_clone_available()
+    clone_allowed_by_platform = not IS_STREAMLIT_CLOUD or ALLOW_CLOUD_VOICE_CLONE
+    clone_available = is_voice_clone_available() and clone_allowed_by_platform
     if clone_available:
         tts_mode_options.append("Voice Clone")
     else:
-        unavailable_message = "Voice Clone is unavailable in this environment (XTTS dependency not installed)."
-        if IS_STREAMLIT_CLOUD:
-            unavailable_message += (
-                " On Streamlit Cloud, set Python 3.11 in Advanced settings and redeploy."
+        if IS_STREAMLIT_CLOUD and not ALLOW_CLOUD_VOICE_CLONE:
+            unavailable_message = (
+                "Voice Clone is disabled on Streamlit Cloud by default due RAM/latency limits. "
+                "Set `ALLOW_CLOUD_VOICE_CLONE=1` to force-enable it."
+            )
+        else:
+            unavailable_message = (
+                "Voice Clone is unavailable in this environment (XTTS dependency not installed)."
             )
         st.info(unavailable_message)
 
@@ -301,7 +314,10 @@ def _tts_tab() -> None:
                 reference_wav_path=ref_path,
             )
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Voice clone generation failed: {exc}")
+        details = str(exc).strip() or exc.__class__.__name__
+        st.error(f"Voice clone generation failed: {details}")
+        with st.expander("Technical details"):
+            st.exception(exc)
         return
     finally:
         if ref_path is not None:
