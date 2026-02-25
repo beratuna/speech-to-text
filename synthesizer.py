@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import os
 import platform
 import tempfile
+import warnings
 import wave
 from dataclasses import dataclass
 from functools import lru_cache
@@ -15,8 +17,16 @@ TTS_LANGUAGES: dict[str, str] = {
 }
 
 MLX_TTS_MODEL = "mlx-community/chatterbox-6bit"
+XTTS_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
+COQUI_TOS_AGREED_ENV = "COQUI_TOS_AGREED"
+TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD_ENV = "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"
 SOFT_TEXT_LIMIT = 600
+REFERENCE_TARGET_SAMPLE_RATE = 22_050
+REFERENCE_MIN_DURATION_SECONDS = 3.0
+REFERENCE_MAX_DURATION_SECONDS = 30.0
+REFERENCE_SILENCE_TOP_DB = 20
 _TTS_MODEL_LOADED = False
+_VOICE_CLONE_MODEL_LOADED = False
 
 
 @dataclass(frozen=True)
@@ -49,12 +59,39 @@ def _has_chatterbox_support() -> bool:
     return True
 
 
+def _has_xtts_support() -> bool:
+    try:
+        from TTS.api import TTS as _  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _xtts_device() -> str:
+    try:
+        import torch
+    except Exception:  # noqa: BLE001
+        return "cpu"
+    has_mps = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    return "mps" if has_mps else "cpu"
+
+
 def get_tts_backend_name() -> str:
     if _has_mlx_tts_support():
         return "mlx-audio"
     if _has_chatterbox_support():
         return "chatterbox-tts"
     return "gtts"
+
+
+def is_voice_clone_available() -> bool:
+    return _has_xtts_support()
+
+
+def get_voice_clone_backend_name() -> str:
+    if not _has_xtts_support():
+        return "unavailable"
+    return f"xtts-v2 ({_xtts_device()})"
 
 
 @lru_cache(maxsize=1)
@@ -69,6 +106,13 @@ def _load_chatterbox_model() -> Any:
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
     return ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+
+
+@lru_cache(maxsize=1)
+def _load_xtts_model() -> Any:
+    from TTS.api import TTS
+
+    return TTS(XTTS_MODEL).to(_xtts_device())
 
 
 def is_tts_model_loaded() -> bool:
@@ -88,11 +132,28 @@ def load_tts_model() -> None:
     _TTS_MODEL_LOADED = True
 
 
+def is_voice_clone_model_loaded() -> bool:
+    return _VOICE_CLONE_MODEL_LOADED
+
+
+def load_voice_clone_model() -> None:
+    global _VOICE_CLONE_MODEL_LOADED
+    # XTTS v2 prompts interactively for CPML acceptance unless this env is set.
+    os.environ.setdefault(COQUI_TOS_AGREED_ENV, "1")
+    # Coqui TTS 0.22 internally calls torch.load() without weights_only=False.
+    # Torch 2.6 defaults to weights_only=True and breaks XTTS checkpoints.
+    os.environ.setdefault(TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD_ENV, "1")
+    _load_xtts_model()
+    _VOICE_CLONE_MODEL_LOADED = True
+
+
 def reset_tts_model_state() -> None:
-    global _TTS_MODEL_LOADED
+    global _TTS_MODEL_LOADED, _VOICE_CLONE_MODEL_LOADED
     _load_mlx_tts_model.cache_clear()
     _load_chatterbox_model.cache_clear()
+    _load_xtts_model.cache_clear()
     _TTS_MODEL_LOADED = False
+    _VOICE_CLONE_MODEL_LOADED = False
 
 
 def _resolve_generated_wav_path(prefix_path: Path, generated: Any) -> Path:
@@ -204,12 +265,118 @@ def _synthesize_gtts(text: str, language: str) -> SynthesisResult:
     )
 
 
-def synthesize_with_metadata(text: str, language: str) -> SynthesisResult:
+def _load_reference_waveform(source_path: Path) -> Any:
+    try:
+        import librosa
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Failed to import librosa for reference audio preprocessing.") from exc
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="PySoundFile failed. Trying audioread instead.",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="librosa.core.audio.__audioread_load",
+            category=FutureWarning,
+        )
+        waveform, _ = librosa.load(str(source_path), sr=REFERENCE_TARGET_SAMPLE_RATE, mono=True)
+    return waveform
+
+
+def _trim_reference_waveform(waveform: Any) -> Any:
+    try:
+        import librosa
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Failed to import librosa for reference audio preprocessing.") from exc
+    trimmed, _ = librosa.effects.trim(waveform, top_db=REFERENCE_SILENCE_TOP_DB)
+    return trimmed
+
+
+def _write_reference_wav(samples: Any) -> Path:
+    try:
+        import soundfile as sf
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Failed to import soundfile for reference audio preprocessing.") from exc
+    output_path = _create_temp_path(suffix=".wav")
+    sf.write(str(output_path), samples, REFERENCE_TARGET_SAMPLE_RATE)
+    return output_path
+
+
+def preprocess_reference_audio(audio_bytes: bytes, suffix: str = ".wav") -> tuple[Path, list[str]]:
+    if not audio_bytes:
+        raise ValueError("Reference audio file is empty.")
+
+    normalized_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=normalized_suffix) as source_file:
+        source_file.write(audio_bytes)
+        source_path = Path(source_file.name)
+
+    try:
+        waveform = _load_reference_waveform(source_path)
+    finally:
+        source_path.unlink(missing_ok=True)
+
+    trimmed = _trim_reference_waveform(waveform)
+    if len(trimmed) == 0:
+        raise ValueError("Reference audio is empty after silence trimming.")
+
+    warnings: list[str] = []
+    duration_seconds = len(trimmed) / REFERENCE_TARGET_SAMPLE_RATE
+    if duration_seconds < REFERENCE_MIN_DURATION_SECONDS:
+        warnings.append(
+            f"Reference audio is only {duration_seconds:.1f}s; at least 3s is recommended."
+        )
+    if duration_seconds > REFERENCE_MAX_DURATION_SECONDS:
+        warnings.append(
+            f"Reference audio is {duration_seconds:.1f}s; trimming to first 30s for performance."
+        )
+        max_samples = int(REFERENCE_MAX_DURATION_SECONDS * REFERENCE_TARGET_SAMPLE_RATE)
+        trimmed = trimmed[:max_samples]
+
+    return _write_reference_wav(trimmed), warnings
+
+
+def _validate_synthesis_inputs(text: str, language: str) -> str:
     cleaned_text = text.strip()
     if not cleaned_text:
         raise ValueError("Text cannot be empty.")
     if language not in set(TTS_LANGUAGES.values()):
         raise ValueError(f"Unsupported language code: {language}")
+    return cleaned_text
+
+
+def _create_temp_path(suffix: str) -> Path:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        return Path(temp_file.name)
+
+
+def _synthesize_xtts(text: str, language: str, reference_wav_path: Path) -> SynthesisResult:
+    model = _load_xtts_model()
+    output_path = _create_temp_path(suffix=".wav")
+
+    try:
+        model.tts_to_file(
+            text=text,
+            speaker_wav=str(reference_wav_path),
+            language=language,
+            file_path=str(output_path),
+        )
+        audio_bytes = output_path.read_bytes()
+    finally:
+        output_path.unlink(missing_ok=True)
+
+    return SynthesisResult(
+        audio_bytes=audio_bytes,
+        mime_type="audio/wav",
+        sample_rate=24_000,
+        backend=get_voice_clone_backend_name(),
+    )
+
+
+def synthesize_with_metadata(text: str, language: str) -> SynthesisResult:
+    cleaned_text = _validate_synthesis_inputs(text=text, language=language)
 
     # TODO: Add cloud fallback backend for constrained deployment environments.
     # TODO: Add chunk-and-concat generation for very long text.
@@ -219,3 +386,19 @@ def synthesize_with_metadata(text: str, language: str) -> SynthesisResult:
     if _has_chatterbox_support():
         return _synthesize_chatterbox(cleaned_text, language=language)
     return _synthesize_gtts(cleaned_text, language=language)
+
+
+def synthesize_clone_with_metadata(
+    text: str,
+    language: str,
+    reference_wav_path: Path | str,
+) -> SynthesisResult:
+    cleaned_text = _validate_synthesis_inputs(text=text, language=language)
+    reference_path = Path(reference_wav_path)
+    if not reference_path.exists():
+        raise FileNotFoundError(f"Reference WAV not found: {reference_path}")
+    if not is_voice_clone_available():
+        raise RuntimeError("Voice clone backend is unavailable. Install the `TTS` package.")
+
+    load_voice_clone_model()
+    return _synthesize_xtts(cleaned_text, language=language, reference_wav_path=reference_path)

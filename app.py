@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -10,9 +11,15 @@ from synthesizer import (
     TTS_LANGUAGES,
     SynthesisResult,
     get_tts_backend_name,
+    get_voice_clone_backend_name,
     is_tts_model_loaded,
+    is_voice_clone_available,
+    is_voice_clone_model_loaded,
     load_tts_model,
+    load_voice_clone_model,
+    preprocess_reference_audio,
     reset_tts_model_state,
+    synthesize_clone_with_metadata,
     synthesize_with_metadata,
 )
 from transcriber import (
@@ -30,6 +37,7 @@ SUPPORTED_AUDIO_TYPES = ["wav", "mp3", "m4a", "ogg", "flac"]
 SUPPORTED_VIDEO_TYPES = ["mp4", "mov", "m4v", "mkv", "webm", "avi"]
 SUPPORTED_MEDIA_TYPES = [*SUPPORTED_AUDIO_TYPES, *SUPPORTED_VIDEO_TYPES]
 SOFT_WARNING_BYTES = 100 * 1024 * 1024
+IS_STREAMLIT_CLOUD = os.environ.get("HOME") == "/home/appuser"
 
 
 def _save_temp_file(content: bytes, suffix: str) -> Path:
@@ -156,6 +164,17 @@ def _render_tts_result(result: SynthesisResult) -> None:
     st.caption(f"Backend: {result.backend}")
 
 
+def _render_voice_clone_tips() -> None:
+    with st.expander("Tips for best results"):
+        st.markdown(
+            "- **Duration:** 5–15 seconds is ideal.\n"
+            "- **Content:** Clear, natural speech works best.\n"
+            "- **Format:** WAV preferred, MP3 and other common formats accepted.\n"
+            "- **Noise:** Use a quiet recording for better cloning quality.\n"
+            "- **Language match:** Best results usually come from matching reference/target language."
+        )
+
+
 def _tts_tab() -> None:
     if "tts_text" not in st.session_state:
         st.session_state["tts_text"] = st.session_state.get("latest_transcript", "")
@@ -169,24 +188,84 @@ def _tts_tab() -> None:
             f"Long text detected (>{SOFT_TEXT_LIMIT} chars). This can be slower; chunking is planned."
         )
 
-    if not st.button("Generate speech", use_container_width=True, key="generate_speech"):
+    tts_mode = st.radio("TTS mode", ["Standard", "Voice Clone"], horizontal=True, key="tts_mode")
+    language_code = TTS_LANGUAGES[selected_language_label]
+    reference_file = None
+    button_label = "Generate speech"
+
+    if tts_mode == "Voice Clone":
+        st.caption(f"Clone backend: {get_voice_clone_backend_name()}")
+        if IS_STREAMLIT_CLOUD:
+            st.info(
+                "Voice cloning on Streamlit Cloud runs on CPU and may take 20-40 seconds for short text."
+            )
+        _render_voice_clone_tips()
+        reference_file = st.file_uploader(
+            "Reference voice sample",
+            type=SUPPORTED_AUDIO_TYPES,
+            key="ref_audio_upload",
+            help="Upload a 3-30s clip for better clone quality.",
+        )
+        if reference_file is not None:
+            st.audio(reference_file)
+        button_label = "Generate cloned speech"
+
+    if not st.button(button_label, use_container_width=True, key="generate_speech"):
         return
 
-    language_code = TTS_LANGUAGES[selected_language_label]
-    if not is_tts_model_loaded():
+    if tts_mode == "Standard":
+        if not is_tts_model_loaded():
+            try:
+                with st.spinner("Loading model..."):
+                    load_tts_model()
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Model loading failed: {exc}")
+                return
+
         try:
-            with st.spinner("Loading model..."):
-                load_tts_model()
+            with st.spinner("Generating speech..."):
+                result = synthesize_with_metadata(text=text_to_speak, language=language_code)
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Model loading failed: {exc}")
+            st.error(f"Speech generation failed: {exc}")
             return
 
-    try:
-        with st.spinner("Generating speech..."):
-            result = synthesize_with_metadata(text=text_to_speak, language=language_code)
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"Speech generation failed: {exc}")
+        _render_tts_result(result)
         return
+
+    if not is_voice_clone_available():
+        st.error("Voice clone backend is unavailable. Install the `TTS` dependency to enable it.")
+        return
+    if reference_file is None:
+        st.warning("Please upload a reference voice sample before generating cloned speech.")
+        return
+
+    ref_suffix = Path(reference_file.name).suffix or ".wav"
+    ref_path: Path | None = None
+    try:
+        with st.spinner("Preprocessing reference audio..."):
+            ref_path, preprocess_warnings = preprocess_reference_audio(
+                audio_bytes=reference_file.getvalue(),
+                suffix=ref_suffix,
+            )
+        for warning in preprocess_warnings:
+            st.warning(warning)
+
+        if not is_voice_clone_model_loaded():
+            with st.spinner("Loading clone model..."):
+                load_voice_clone_model()
+
+        with st.spinner("Cloning voice and generating speech..."):
+            result = synthesize_clone_with_metadata(
+                text=text_to_speak,
+                language=language_code,
+                reference_wav_path=ref_path,
+            )
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Voice clone generation failed: {exc}")
+        return
+    finally:
+        if ref_path is not None:
+            ref_path.unlink(missing_ok=True)
 
     _render_tts_result(result)
 
@@ -211,7 +290,8 @@ def main() -> None:
         else:
             model_path = None
             language = None
-            st.caption(f"Backend: {get_tts_backend_name()}")
+            st.caption(f"Standard backend: {get_tts_backend_name()}")
+            st.caption(f"Voice clone backend: {get_voice_clone_backend_name()}")
 
         if st.button("Clear local models", use_container_width=True):
             removed, failed = clear_local_models()
