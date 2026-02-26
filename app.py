@@ -349,7 +349,7 @@ def _render_page_header() -> None:
     st.markdown(
         """
         <div class="ui-hero">
-          <h1>Voice Cloning Studio</h1>
+          <h1>Voice Studio</h1>
           <p>Import speech, extract text, and generate standard or cloned voice output in one flow.</p>
         </div>
         """,
@@ -586,7 +586,7 @@ def _render_maintenance_section() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Voice Cloning Studio", page_icon="🎙️", layout="wide")
+    st.set_page_config(page_title="Voice Studio", page_icon="🎙️", layout="wide")
     _inject_ui_styles()
     _render_page_header()
 
