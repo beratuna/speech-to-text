@@ -229,6 +229,18 @@ def _inject_ui_styles() -> None:
         summary.st-emotion-cache-11ofl8m.e12o48ov4 * {
             color: var(--ui-control-fg) !important;
         }
+        [data-testid="stCheckbox"] [role="checkbox"] {
+            background: #6f7889 !important;
+            border: 1px solid #9aa4b6 !important;
+            border-radius: 6px !important;
+        }
+        [data-testid="stCheckbox"] [role="checkbox"][aria-checked="true"] {
+            background: #858fa0 !important;
+            border-color: #aeb7c7 !important;
+        }
+        [data-testid="stCheckbox"] [role="checkbox"] svg {
+            fill: #eef3ff !important;
+        }
         button[data-testid="stBaseButton-segmented_control"],
         button[data-testid="stBaseButton-segmented_controlActive"],
         button.e1mwqyj912,
