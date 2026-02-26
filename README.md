@@ -1,8 +1,9 @@
 # Speech to Text
 
-Minimal Streamlit app for Turkish/English speech workflows:
-- Speech-to-text (audio/video upload + mic recording)
-- Text-to-speech (TR/EN)
+Minimal Streamlit app for Turkish/English speech workflows in a single-page UI:
+- Speech-to-text
+- Text-to-speech
+- Speech-to-speech (speech -> text -> speech)
 
 <!-- LOC_START -->Python LOC: `737` across `8` files (auto-updated).<!-- LOC_END -->
 
@@ -19,6 +20,11 @@ Model availability:
 - Apple Silicon: Large/Medium/Small
 - Non-Apple and Streamlit Cloud: Small/Medium (Large is hidden to avoid deploy/runtime failures)
 
+Workflow notes:
+- Two top-level flows: **Speech -> Text/Speech** and **Text -> Speech**
+- In speech flow, output mode can stop at **Text only** or continue to **Standard / Voice Clone** speech
+- Speech input and voice-clone reference use the same media module (record or upload audio/video)
+
 TTS notes:
 - Standard mode keeps the existing auto backend selection (`mlx-audio` / `chatterbox-tts` / `gTTS`)
 - Voice Clone mode uses Coqui XTTS v2 (zero-shot, local-only)
@@ -26,7 +32,7 @@ TTS notes:
 
 ## TTS v2: Voice Clone
 
-Voice cloning is available in **Text-to-Speech → Voice Clone** mode:
+Voice cloning is available in **Speech Output -> Voice Clone** mode:
 - Upload a 3-30s reference voice clip (WAV, MP3, M4A, OGG, FLAC)
 - The app preprocesses the clip (mono, 22_050 Hz, silence trim)
 - XTTS v2 synthesizes Turkish or English speech in the reference voice

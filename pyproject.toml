@@ -32,7 +32,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["synthesizer", "transcriber"]
+known-first-party = ["synthesizer", "transcriber", "workflow_media"]
 
 [tool.pytest.ini_options]
 markers = [
